@@ -18,26 +18,28 @@
 
 #include <opencv2/opencv.hpp>
 
+#include <pcl/kdtree/kdtree_flann.h>  // pcl include kdtree_flann throws error if PCL_NO_PRECOMPILE
+                                      // is defined before
+#define PCL_NO_PRECOMPILE
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 #include <pcl/search/impl/search.hpp>
 #include <pcl/range_image/range_image.h>
-#include <pcl/kdtree/kdtree_flann.h>
 #include <pcl/common/common.h>
 #include <pcl/common/transforms.h>
 #include <pcl/registration/icp.h>
 #include <pcl/io/pcd_io.h>
 #include <pcl/filters/filter.h>
 #include <pcl/filters/voxel_grid.h>
-#include <pcl/filters/crop_box.h> 
+#include <pcl/filters/crop_box.h>
 #include <pcl_conversions/pcl_conversions.h>
 
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_ros/transform_listener.h>
 #include <tf2_ros/transform_broadcaster.h>
-#include <tf2_eigen/tf2_eigen.h>
-#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
- 
+#include <tf2_eigen/tf2_eigen.hpp>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+
 #include <vector>
 #include <cmath>
 #include <algorithm>
@@ -60,7 +62,7 @@ using namespace std;
 
 typedef pcl::PointXYZI PointType;
 
-enum class SensorType { VELODYNE, OUSTER, ROBOSENSE, LIVOX};
+enum class SensorType { VELODYNE, OUSTER, LIVOX, ROBOSENSE };
 
 class ParamServer : public rclcpp::Node
 {
@@ -90,7 +92,7 @@ public:
     string savePCDDirectory;
 
     // Lidar Sensor Configuration
-    SensorType sensor = SensorType::VELODYNE;
+    SensorType sensor = SensorType::OUSTER;
     string thisSensorType;
     int N_SCAN;
     int Horizon_SCAN;
@@ -112,7 +114,6 @@ public:
     Eigen::Matrix3d extRPY;
     Eigen::Vector3d extTrans;
     Eigen::Quaterniond extQRPY;
-    Eigen::Matrix4d pointTrans;
 
     // LOAM
     float edgeThreshold;
@@ -125,7 +126,7 @@ public:
     float mappingCornerLeafSize;
     float mappingSurfLeafSize ;
 
-    float z_tollerance; 
+    float z_tollerance;
     float rotation_tollerance;
 
     // CPU Params
@@ -133,11 +134,11 @@ public:
     double mappingProcessInterval;
 
     // Surrounding map
-    float surroundingkeyframeAddingDistThreshold; 
-    float surroundingkeyframeAddingAngleThreshold; 
+    float surroundingkeyframeAddingDistThreshold;
+    float surroundingkeyframeAddingAngleThreshold;
     float surroundingKeyframeDensity;
     float surroundingKeyframeSearchRadius;
-    
+
     // Loop closure
     bool  loopClosureEnableFlag;
     float loopClosureFrequency;
@@ -162,10 +163,32 @@ public:
         get_parameter("odomTopic", odomTopic);
         declare_parameter("gpsTopic", "lio_sam/odometry/gps");
         get_parameter("gpsTopic", gpsTopic);
-        declare_parameter("sensor", "velodyne");
+
+        declare_parameter("lidarFrame", "laser_data_frame");
+        get_parameter("lidarFrame", lidarFrame);
+        declare_parameter("baselinkFrame", "base_link");
+        get_parameter("baselinkFrame", baselinkFrame);
+        declare_parameter("odometryFrame", "odom");
+        get_parameter("odometryFrame", odometryFrame);
+        declare_parameter("mapFrame", "map");
+        get_parameter("mapFrame", mapFrame);
+
+        declare_parameter("useImuHeadingInitialization", false);
+        get_parameter("useImuHeadingInitialization", useImuHeadingInitialization);
+        declare_parameter("useGpsElevation", false);
+        get_parameter("useGpsElevation", useGpsElevation);
+        declare_parameter("gpsCovThreshold", 2.0);
+        get_parameter("gpsCovThreshold", gpsCovThreshold);
+        declare_parameter("poseCovThreshold", 25.0);
+        get_parameter("poseCovThreshold", poseCovThreshold);
+
+        declare_parameter("savePCD", false);
+        get_parameter("savePCD", savePCD);
+        declare_parameter("savePCDDirectory", "/Downloads/LOAM/");
+        get_parameter("savePCDDirectory", savePCDDirectory);
+
+        declare_parameter("sensor", "ouster");
         get_parameter("sensor", thisSensorType);
-
-
         if (thisSensorType == "velodyne")
         {
             sensor = SensorType::VELODYNE;
@@ -189,37 +212,15 @@ public:
             std::cout << "invalid sensor type!!!" << endl;
         
         }
-        declare_parameter("lidarFrame", "laser_data_frame");
-        get_parameter("lidarFrame", lidarFrame);
-        declare_parameter("baselinkFrame", "base_link");
-        get_parameter("baselinkFrame", baselinkFrame);
-        declare_parameter("odometryFrame", "odom");
-        get_parameter("odometryFrame", odometryFrame);
-        declare_parameter("mapFrame", "map");
-        get_parameter("mapFrame", mapFrame);
 
-        declare_parameter("useImuHeadingInitialization", false);
-        get_parameter("useImuHeadingInitialization", useImuHeadingInitialization);
-        declare_parameter("useGpsElevation", false);
-        get_parameter("useGpsElevation", useGpsElevation);
-        declare_parameter("gpsCovThreshold", 2.0);
-        get_parameter("gpsCovThreshold", gpsCovThreshold);
-        declare_parameter("poseCovThreshold", 25.0);
-        get_parameter("poseCovThreshold", poseCovThreshold);
-        
-        declare_parameter("savePCD", false);
-        get_parameter("savePCD", savePCD);
-        
-        declare_parameter("savePCDDirectory", "/Downloads/LOAM/");
-        get_parameter("savePCDDirectory", savePCDDirectory);
 
-        declare_parameter("N_SCAN", 16);
+        declare_parameter("N_SCAN", 64);
         get_parameter("N_SCAN", N_SCAN);
-        declare_parameter("Horizon_SCAN", 1800);
+        declare_parameter("Horizon_SCAN", 512);
         get_parameter("Horizon_SCAN", Horizon_SCAN);
         declare_parameter("downsampleRate", 1);
         get_parameter("downsampleRate", downsampleRate);
-        declare_parameter("lidarMinRange", 3.);
+        declare_parameter("lidarMinRange", 5.5);
         get_parameter("lidarMinRange", lidarMinRange);
         declare_parameter("lidarMaxRange", 1000.0);
         get_parameter("lidarMaxRange", lidarMaxRange);
@@ -238,8 +239,8 @@ public:
         get_parameter("imuRPYWeight", imuRPYWeight);
 
         double ida[] = { 1.0,  0.0,  0.0,
-                         0.0,  -1.0,  0.0,
-                         0.0,  0.0,  -1.0};
+                         0.0,  1.0,  0.0,
+                         0.0,  0.0,  1.0};
         std::vector < double > id(ida, std::end(ida));
         declare_parameter("extrinsicRot", id);
         get_parameter("extrinsicRot", extRotV);
@@ -255,10 +256,6 @@ public:
         extTrans = Eigen::Map<const Eigen::Matrix<double, -1, -1, Eigen::RowMajor>>(extTransV.data(), 3, 1);
         extQRPY = Eigen::Quaterniond(extRPY);
 
-        pointTrans.block<3, 3>(0, 0) = extRPY;
-        pointTrans.block<3, 1>(0, 3) = extTrans;
-
-        std::cout << "Test: " << pointTrans(0, 0) << " " << pointTrans(0, 1) << " " << pointTrans(0, 2)<< " " << pointTrans(1, 1) << std::endl;
         declare_parameter("edgeThreshold", 1.0);
         get_parameter("edgeThreshold", edgeThreshold);
         declare_parameter("surfThreshold", 0.1);
@@ -279,7 +276,7 @@ public:
         get_parameter("z_tollerance", z_tollerance);
         declare_parameter("rotation_tollerance", 1000.0);
         get_parameter("rotation_tollerance", rotation_tollerance);
-        
+
         declare_parameter("numberOfCores", 4);
         get_parameter("numberOfCores", numberOfCores);
         declare_parameter("mappingProcessInterval", 0.15);
@@ -342,10 +339,10 @@ public:
         imu_out.orientation.z = q_final.z();
         imu_out.orientation.w = q_final.w();
 
-       // if (sqrt(q_final.x()*q_final.x() + q_final.y()*q_final.y() + q_final.z()*q_final.z() + q_final.w()*q_final.w()) < 0.1)
+        //if (sqrt(q_final.x()*q_final.x() + q_final.y()*q_final.y() + q_final.z()*q_final.z() + q_final.w()*q_final.w()) < 0.1)
         //{
-          //  RCLCPP_ERROR(get_logger(), "Invalid quaternion, please use a 9-axis IMU!");
-    //rclcpp::shutdown();
+        //    RCLCPP_ERROR(get_logger(), "Invalid quaternion, please use a 9-axis IMU!");
+        //    rclcpp::shutdown();
        // }
 
         return imu_out;
@@ -415,59 +412,59 @@ float pointDistance(PointType p1, PointType p2)
 }
 
 rmw_qos_profile_t qos_profile{
-  RMW_QOS_POLICY_HISTORY_KEEP_LAST,
-  1,
-  RMW_QOS_POLICY_RELIABILITY_BEST_EFFORT,
-  RMW_QOS_POLICY_DURABILITY_VOLATILE,
-  RMW_QOS_DEADLINE_DEFAULT,
-  RMW_QOS_LIFESPAN_DEFAULT,
-  RMW_QOS_POLICY_LIVELINESS_SYSTEM_DEFAULT,
-  RMW_QOS_LIVELINESS_LEASE_DURATION_DEFAULT,
-  false
+    RMW_QOS_POLICY_HISTORY_KEEP_LAST,
+    1,
+    RMW_QOS_POLICY_RELIABILITY_BEST_EFFORT,
+    RMW_QOS_POLICY_DURABILITY_VOLATILE,
+    RMW_QOS_DEADLINE_DEFAULT,
+    RMW_QOS_LIFESPAN_DEFAULT,
+    RMW_QOS_POLICY_LIVELINESS_SYSTEM_DEFAULT,
+    RMW_QOS_LIVELINESS_LEASE_DURATION_DEFAULT,
+    false
 };
 
 auto qos = rclcpp::QoS(
     rclcpp::QoSInitialization(
-      qos_profile.history,
-      qos_profile.depth
+        qos_profile.history,
+        qos_profile.depth
     ),
     qos_profile);
 
 rmw_qos_profile_t qos_profile_imu{
-  RMW_QOS_POLICY_HISTORY_KEEP_LAST,
-  2000,
-  RMW_QOS_POLICY_RELIABILITY_BEST_EFFORT,
-  RMW_QOS_POLICY_DURABILITY_VOLATILE,
-  RMW_QOS_DEADLINE_DEFAULT,
-  RMW_QOS_LIFESPAN_DEFAULT,
-  RMW_QOS_POLICY_LIVELINESS_SYSTEM_DEFAULT,
-  RMW_QOS_LIVELINESS_LEASE_DURATION_DEFAULT,
-  false
+    RMW_QOS_POLICY_HISTORY_KEEP_LAST,
+    2000,
+    RMW_QOS_POLICY_RELIABILITY_BEST_EFFORT,
+    RMW_QOS_POLICY_DURABILITY_VOLATILE,
+    RMW_QOS_DEADLINE_DEFAULT,
+    RMW_QOS_LIFESPAN_DEFAULT,
+    RMW_QOS_POLICY_LIVELINESS_SYSTEM_DEFAULT,
+    RMW_QOS_LIVELINESS_LEASE_DURATION_DEFAULT,
+    false
 };
 
 auto qos_imu = rclcpp::QoS(
     rclcpp::QoSInitialization(
-      qos_profile_imu.history,
-      qos_profile_imu.depth
+        qos_profile_imu.history,
+        qos_profile_imu.depth
     ),
     qos_profile_imu);
 
 rmw_qos_profile_t qos_profile_lidar{
-  RMW_QOS_POLICY_HISTORY_KEEP_LAST,
-  5,
-  RMW_QOS_POLICY_RELIABILITY_BEST_EFFORT,
-  RMW_QOS_POLICY_DURABILITY_VOLATILE,
-  RMW_QOS_DEADLINE_DEFAULT,
-  RMW_QOS_LIFESPAN_DEFAULT,
-  RMW_QOS_POLICY_LIVELINESS_SYSTEM_DEFAULT,
-  RMW_QOS_LIVELINESS_LEASE_DURATION_DEFAULT,
-  false
+    RMW_QOS_POLICY_HISTORY_KEEP_LAST,
+    5,
+    RMW_QOS_POLICY_RELIABILITY_BEST_EFFORT,
+    RMW_QOS_POLICY_DURABILITY_VOLATILE,
+    RMW_QOS_DEADLINE_DEFAULT,
+    RMW_QOS_LIFESPAN_DEFAULT,
+    RMW_QOS_POLICY_LIVELINESS_SYSTEM_DEFAULT,
+    RMW_QOS_LIVELINESS_LEASE_DURATION_DEFAULT,
+    false
 };
 
 auto qos_lidar = rclcpp::QoS(
     rclcpp::QoSInitialization(
-      qos_profile_lidar.history,
-      qos_profile_lidar.depth
+        qos_profile_lidar.history,
+        qos_profile_lidar.depth
     ),
     qos_profile_lidar);
 

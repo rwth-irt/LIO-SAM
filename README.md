@@ -1,9 +1,3 @@
-
-# Adapted from https://github.com/TixiaoShan/LIO-SAM
-
-
----
-
 # LIO-SAM
 
 **A real-time lidar-inertial odometry package. We strongly recommend the users read this document thoroughly and test the package with the provided dataset first. A video of the demonstration of the method can be found on [YouTube](https://www.youtube.com/watch?v=A0H8CoORZJU).**
@@ -203,7 +197,7 @@ ros2 service call /lio_sam/save_map lio_sam/srv/SaveMap "{resolution: 0.2, desti
 
   - **gps odometry unavailable**: it is generally caused due to unavailable transform between message frame_ids and robot frame_id (for example: transform should be available from "imu_frame_id" and "gps_frame_id" to "base_link" frame. Please read the Robot Localization documentation found [here](http://docs.ros.org/en/melodic/api/robot_localization/html/preparing_sensor_data.html).
 
-## Paper
+## Paper 
 
 Thank you for citing [LIO-SAM (IROS-2020)](./config/doc/paper.pdf) if you use any of this code. 
 ```
